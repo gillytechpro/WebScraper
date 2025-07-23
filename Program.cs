@@ -10,18 +10,15 @@ class Program
         // Display usage if no arguments provided
         if (args.Length == 0)
         {
-            Console.WriteLine("Usage:");
-            Console.WriteLine("  dotnet run <website_url> [target_page]");
-            Console.WriteLine("\nExamples:");
-            Console.WriteLine("  dotnet run example.com");
-            Console.WriteLine("  dotnet run https://example.com about");
-            Console.WriteLine("  dotnet run example.com /contact");
+            Console.WriteLine("Please provide a website URL as an argument.");
+            Console.WriteLine("Usage: WebScraper <website-url> [target-page]");
+            Console.WriteLine("Example: WebScraper example.com about");
             return;
         }
 
         // Get the base URL from the first argument
         string baseUrl = args[0].StartsWith("http") ? args[0] : $"https://{args[0]}";
-        string targetPage = args.Length > 1 ? args[1].TrimStart('/') : null;
+        string? targetPage = args.Length > 1 ? args[1].TrimStart('/') : null;
 
         try
         {
@@ -51,16 +48,16 @@ class Program
                 stopwatch.Stop();
                 TimeSpan loadTime = stopwatch.Elapsed;
 
-                // Extract headings (h1 and h2)
-                var headings = driver.FindElements(By.CssSelector("h1, h2"));
-                
                 // Store initial page content before any navigation
                 var initialHeadings = driver.FindElements(By.CssSelector("h1, h2"))
-                    .Select(h => (h.TagName, h.Text.Trim()))
+                    .Select(h => (h.TagName, Text: h.Text?.Trim() ?? string.Empty))
+                    .Where(h => !string.IsNullOrWhiteSpace(h.Text))
                     .ToList();
                 
                 var firstParagraph = driver.FindElements(By.CssSelector("p"))
-                    .FirstOrDefault()?.Text ?? "No paragraph found";
+                    .Select(p => p.Text?.Trim())
+                    .FirstOrDefault(text => !string.IsNullOrWhiteSpace(text)) 
+                    ?? "No paragraph found";
 
                 string navigationStatus = "No target page specified";
                 bool pageNavigated = false;
@@ -70,15 +67,17 @@ class Program
                     try
                     {
                         // Try direct navigation first
-                        string targetUrl = baseUrl.TrimEnd('/') + "/" + targetPage.TrimStart('/');
-                        driver.Navigate().GoToUrl(targetUrl);
-                        
-                        // Wait for the new page to load
-                        var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(10));
-                        wait.Until(d => ((IJavaScriptExecutor)d).ExecuteScript("return document.readyState").Equals("complete"));
-                        
-                        navigationStatus = $"Navigated to: {targetUrl}";
-                        pageNavigated = true;
+                        string targetUrl = $"{baseUrl.TrimEnd('/')}/{targetPage?.TrimStart('/')}";
+                        if (!string.IsNullOrWhiteSpace(targetUrl))
+                        {
+                            driver.Navigate().GoToUrl(targetUrl);
+                            
+                            // Wait for the new page to load
+                            wait.Until(d => ((IJavaScriptExecutor)d).ExecuteScript("return document.readyState").Equals("complete"));
+                            
+                            navigationStatus = $"Navigated to: {targetUrl}";
+                            pageNavigated = true;
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -89,13 +88,13 @@ class Program
                             var targetLinks = driver.FindElements(By.CssSelector("a"))
                                 .Select(link => new 
                                 { 
-                                    Element = link,
                                     Href = link.GetAttribute("href")?.ToLower() ?? "",
                                     Text = link.Text?.ToLower() ?? ""
                                 })
-                                .Where(link => link.Href.Contains(targetPage.ToLower()) || 
+                                .Where(link => !string.IsNullOrEmpty(link.Href) && 
+                                             (link.Href.Contains(targetPage!.ToLower()) || 
                                               link.Text.Contains(targetPage.ToLower()) ||
-                                              link.Href.EndsWith($"/{targetPage.ToLower()}"))
+                                              link.Href.EndsWith($"/{targetPage.ToLower()}")))
                                 .Take(1)
                                 .ToList();
 
@@ -108,7 +107,7 @@ class Program
                                     driver.Navigate().GoToUrl(targetUrl);
                                     
                                     // Wait for the new page to load
-                                    var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(10));
+                                    wait = new WebDriverWait(driver, TimeSpan.FromSeconds(10));
                                     wait.Until(d => ((IJavaScriptExecutor)d).ExecuteScript("return document.readyState").Equals("complete"));
                                     
                                     navigationStatus = $"Navigated to: {targetUrl}";
@@ -117,7 +116,7 @@ class Program
                             }
                             else
                             {
-                                navigationStatus = $"Could not find link containing: {targetPage}";
+                                navigationStatus = $"Could not find a link containing: {targetPage}";
                             }
                         }
                         catch (Exception innerEx)
@@ -149,7 +148,7 @@ class Program
                     try
                     {
                         var newHeadings = driver.FindElements(By.CssSelector("h1, h2"))
-                            .Select(h => (h.TagName, h.Text.Trim()))
+                            .Select(h => (h.TagName, Text: h.Text.Trim()))
                             .ToList();
                         
                         var newFirstParagraph = driver.FindElements(By.CssSelector("p"))
