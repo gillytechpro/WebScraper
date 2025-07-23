@@ -54,11 +54,16 @@ class Program
                 // Extract headings (h1 and h2)
                 var headings = driver.FindElements(By.CssSelector("h1, h2"));
                 
-                // Extract first paragraph
-                var firstParagraph = driver.FindElements(By.CssSelector("p")).FirstOrDefault()?.Text ?? "No paragraph found";
+                // Store initial page content before any navigation
+                var initialHeadings = driver.FindElements(By.CssSelector("h1, h2"))
+                    .Select(h => (h.TagName, h.Text.Trim()))
+                    .ToList();
+                
+                var firstParagraph = driver.FindElements(By.CssSelector("p"))
+                    .FirstOrDefault()?.Text ?? "No paragraph found";
 
-                // Try to navigate to the target page if specified, otherwise look for a contact page
                 string navigationStatus = "No target page specified";
+                bool pageNavigated = false;
                 
                 if (!string.IsNullOrEmpty(targetPage))
                 {
@@ -67,32 +72,47 @@ class Program
                         // Try direct navigation first
                         string targetUrl = baseUrl.TrimEnd('/') + "/" + targetPage.TrimStart('/');
                         driver.Navigate().GoToUrl(targetUrl);
+                        
+                        // Wait for the new page to load
+                        var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(10));
+                        wait.Until(d => ((IJavaScriptExecutor)d).ExecuteScript("return document.readyState").Equals("complete"));
+                        
                         navigationStatus = $"Navigated to: {targetUrl}";
+                        pageNavigated = true;
                     }
                     catch (Exception ex)
                     {
                         // If direct navigation fails, try to find a link
                         try
                         {
+                            // Get all links before any navigation
                             var targetLinks = driver.FindElements(By.CssSelector("a"))
-                                .Where(link => 
-                                {
-                                    string href = link.GetAttribute("href")?.ToLower() ?? "";
-                                    string text = link.Text?.ToLower() ?? "";
-                                    return href.Contains(targetPage.ToLower()) || 
-                                           text.Contains(targetPage.ToLower()) ||
-                                           href.EndsWith($"/{targetPage.ToLower()}");
+                                .Select(link => new 
+                                { 
+                                    Element = link,
+                                    Href = link.GetAttribute("href")?.ToLower() ?? "",
+                                    Text = link.Text?.ToLower() ?? ""
                                 })
+                                .Where(link => link.Href.Contains(targetPage.ToLower()) || 
+                                              link.Text.Contains(targetPage.ToLower()) ||
+                                              link.Href.EndsWith($"/{targetPage.ToLower()}"))
                                 .Take(1)
                                 .ToList();
 
                             if (targetLinks.Any())
                             {
-                                string targetUrl = targetLinks[0].GetAttribute("href");
+                                string targetUrl = targetLinks[0].Href;
                                 if (!string.IsNullOrEmpty(targetUrl))
                                 {
+                                    // Store the URL and navigate directly to avoid stale elements
                                     driver.Navigate().GoToUrl(targetUrl);
+                                    
+                                    // Wait for the new page to load
+                                    var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(10));
+                                    wait.Until(d => ((IJavaScriptExecutor)d).ExecuteScript("return document.readyState").Equals("complete"));
+                                    
                                     navigationStatus = $"Navigated to: {targetUrl}";
+                                    pageNavigated = true;
                                 }
                             }
                             else
@@ -110,19 +130,48 @@ class Program
 
                 // Generate and display the report
                 Console.WriteLine("\n=== WEB PAGE ANALYSIS REPORT ===");
-                Console.WriteLine($"URL: {baseUrl}");
+                Console.WriteLine($"Initial URL: {baseUrl}");
                 Console.WriteLine($"Page Load Time: {loadTime.TotalSeconds:F2} seconds");
                 
-                Console.WriteLine("\n--- HEADINGS ---");
-                foreach (var heading in headings.Take(5)) // Limit to first 5 headings
+                // Display initial page content
+                Console.WriteLine("\n--- INITIAL PAGE HEADINGS ---");
+                foreach (var (tagName, text) in initialHeadings.Take(5))
                 {
-                    Console.WriteLine($"{heading.TagName.ToUpper()}: {heading.Text.Trim()}");
+                    Console.WriteLine($"{tagName.ToUpper()}: {text}");
                 }
 
                 Console.WriteLine("\n--- FIRST PARAGRAPH ---");
                 Console.WriteLine(firstParagraph);
                 
-                Console.WriteLine("\n--- PAGE NAVIGATION ---");
+                // If we navigated to another page, show its content too
+                if (pageNavigated)
+                {
+                    try
+                    {
+                        var newHeadings = driver.FindElements(By.CssSelector("h1, h2"))
+                            .Select(h => (h.TagName, h.Text.Trim()))
+                            .ToList();
+                        
+                        var newFirstParagraph = driver.FindElements(By.CssSelector("p"))
+                            .FirstOrDefault()?.Text ?? "No paragraph found";
+                        
+                        Console.WriteLine("\n--- NAVIGATED PAGE HEADINGS ---");
+                        foreach (var (tagName, text) in newHeadings.Take(5))
+                        {
+                            Console.WriteLine($"{tagName.ToUpper()}: {text}");
+                        }
+                        
+                        Console.WriteLine("\n--- NAVIGATED PAGE FIRST PARAGRAPH ---");
+                        Console.WriteLine(newFirstParagraph);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"\n--- ERROR GETTING NAVIGATED PAGE CONTENT ---");
+                        Console.WriteLine($"Could not retrieve content from navigated page: {ex.Message}");
+                    }
+                }
+                
+                Console.WriteLine("\n--- NAVIGATION STATUS ---");
                 Console.WriteLine(navigationStatus);
                 
                 Console.WriteLine("\n=== END OF REPORT ===\n");
@@ -133,7 +182,7 @@ class Program
             Console.WriteLine($"An error occurred: {ex.Message}");
             if (ex.InnerException != null)
             {
-                Console.WriteLine($"Inner exception: {ex.InnerException.Message}");
+                Console.WriteLine($"Exception: {ex.InnerException.Message}");
             }
             Environment.Exit(1);
         }
